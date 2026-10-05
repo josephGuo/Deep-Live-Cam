@@ -1,9 +1,7 @@
 import glob
 import mimetypes
 import os
-import platform
 import shutil
-import ssl
 import subprocess
 import urllib
 from pathlib import Path
@@ -11,6 +9,7 @@ from typing import List, Any
 from tqdm import tqdm
 
 import modules.globals
+from modules.model_downloader import _ssl_context
 
 TEMP_FILE = "temp.mp4"
 TEMP_DIRECTORY = "temp"
@@ -52,11 +51,17 @@ def detect_fps(target_path: str) -> float:
         "default=noprint_wrappers=1:nokey=1",
         target_path,
     ]
-    output = subprocess.check_output(command).decode().strip().split("/")
     try:
+        output = subprocess.check_output(command, encoding="utf-8").strip().split("/")
         numerator, denominator = map(int, output)
         return numerator / denominator
-    except Exception:
+    except (
+        subprocess.CalledProcessError,
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+        ZeroDivisionError,
+    ):
         pass
     return 30.0
 
@@ -293,13 +298,10 @@ def conditional_download(download_directory_path: str, urls: List[str]) -> None:
         )
         if not os.path.exists(download_file_path):
             request = urllib.request.Request(url)
-            
-            # Create a specific SSL context for macOS to avoid globally disabling verification
-            ctx = None
-            if platform.system().lower() == "darwin":
-                ctx = ssl._create_unverified_context()
-                
-            response = urllib.request.urlopen(request, context=ctx)
+
+            # Verified TLS on every platform; never disable verification here —
+            # model files are executed by the ONNX runtime (#1890).
+            response = urllib.request.urlopen(request, context=_ssl_context())
             total = int(response.headers.get("Content-Length", 0))
             with tqdm(
                 total=total,
